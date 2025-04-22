@@ -8,9 +8,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'url'
 
 import { Command as CommandLineInterface } from 'commander'
-import { REST, RESTPostAPIChatInputApplicationCommandsJSONBody, Routes } from 'discord.js'
+import { REST, RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js'
 
-import { isCommand } from '../src/types/myclient.js'
+import { isCommand } from '../src/typings/command'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -44,13 +44,24 @@ async function getCommands(specified_path: string, options: getCommandsOptions) 
 	return commands
 }
 
+function ValidateIdOrGlobal(value?: string) {
+	if (value === undefined)
+		return null
+
+	if (!isNaN(Number(value)) || value === 'global')
+		return value
+	else
+		throw new Error('error: destination is not id or "global"')
+}
+
 const program = new CommandLineInterface()
 	.name('deploy-commands')
 	.description('Deploy discord commands using their REST API')
 	.version(pjson.version)
 
 program
-	.command('deploy [guild_id]')
+	.command('deploy')
+	.argument('[destination]', 'Deploy commands to guild_id or in global space.', ValidateIdOrGlobal)
 	.description('Deploys commands to the specified guild_id or [DEV_]GUILD_ID in environment.')
 	.option('-F, --filter [pattern]', 'Only add commands that includes the pattern.')
 	.option('-R, --regex [regex]', 'Only add commands that match the Regex pattern.')
@@ -78,13 +89,18 @@ program
 			})
 
 		const rest = new REST().setToken(process.env.BOT_TOKEN)
-		console.log(`Started deploying ${commands.length} application (/) command${commands.length !== 1 ? 's' : ''} in ${command_path} to guild ${guild_id}`)
+		console.log(
+			`Started deploying ${commands.length} application (/) command${commands.length !== 1 ? 's' : ''} in ${command_path} to ${guild_id}`,
+		)
 		const data = await rest.put(
 			// Routes.applicationGuildCommands(process.env.CLIENT_ID, guild_id),
-			`/applications/${process.env.CLIENT_ID}/guilds/${guild_id}/commands`,
+			guild_id !== 'global'
+				? `/applications/${process.env.CLIENT_ID}/guilds/${guild_id}/commands`
+				: `/applications/${process.env.CLIENT_ID}/commands`,
 			{ body: commands },
 		) as { length: number } & Record<string, unknown>
 		console.log(`Sucessfully deployed ${data.length} application command${commands.length !== 1 ? 's' : ''}.`)
+		console.log(data)
 		process.exit(0)
 	})
 

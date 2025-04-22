@@ -4,10 +4,18 @@
     "module": "NodeNext",
     "moduleResolution": "nodenext",
 
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "lib": ["ESNext"],
     "types": ["node"],
     "skipLibCheck": true,
+    "paths": {
+      "~/*": ["./*"],
+      "@typings/*": ["./src/typings/*"],
+      "@utils/*": ["./src/utils/*"],
+      "@commands/*": ["./src/commands/*"]
+    },
 
     "strict": true,
     "alwaysStrict": true,

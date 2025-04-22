@@ -1,8 +1,8 @@
-import { Client, Collection, SlashCommandBuilder } from 'discord.js'
+import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js'
 
 export interface Command {
 	data: SlashCommandBuilder
-	execute: () => Promise<never>
+	execute: (interaction: ChatInputCommandInteraction) => Promise<never>
 }
 
 export function isCommand(command: unknown): command is Command {
@@ -13,8 +13,4 @@ export function isCommand(command: unknown): command is Command {
 		&& (command as Command).data instanceof SlashCommandBuilder
 		&& typeof (command as Command).execute === 'function'
 	)
-}
-
-export class MyClient extends Client {
-	commands = new Collection<string, Command>()
 }
