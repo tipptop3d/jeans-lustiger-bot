@@ -16,7 +16,7 @@ const logger = createLogger({
 			filename: 'logs/latest.log',
 			format: format.combine(
 				format.printf(({ timestamp, level, message, ...meta }: TransformableInfo) => {
-					const rest = Object.keys(meta).length > 0 ? util.inspect(meta, { colors: false, depth: 2 }) : ''
+					const rest = Object.keys(meta).length > 0 ? util.inspect(meta, { colors: false, depth: null }) : ''
 					return `${timestamp} [${level.toUpperCase()}] ${message}${rest ? `\n${rest}` : ''}`
 				}),
 			),
@@ -39,7 +39,7 @@ const logger = createLogger({
 		new transports.Console({
 			format: format.combine(
 				format.printf(({ timestamp, level, message, ...meta }: TransformableInfo) => {
-					const rest = Object.keys(meta).length > 0 ? util.inspect(meta, { colors: true, depth: 2 }) : ''
+					const rest = Object.keys(meta).length > 0 ? util.inspect(meta, { colors: true, depth: null }) : ''
 					return `${timestamp} [${level.toUpperCase()}] ${message}${rest && ['verbose', 'debug', 'error'].includes(level) ? `\n${rest}` : ''}`
 				}),
 				format.colorize({ all: true }),

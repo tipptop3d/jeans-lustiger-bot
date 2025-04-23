@@ -1,5 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, SlashCommandBuilder } from 'discord.js'
 import type { ChatInputCommandInteraction } from 'discord.js'
+import { SqliteError } from 'better-sqlite3'
+import logger from '~/src/utils/logging.ts'
 
 const embed = new EmbedBuilder()
 	.setTitle('Einwilligung in die Datenverarbeitung')
@@ -28,19 +30,19 @@ const embed = new EmbedBuilder()
 		},
 		{
 			name: 'Betroffenenrechte',
-			value: 'Du hast das Recht auf:\
-- Auskunft (Art. 15 DSGVO)\
-- Berichtigung (Art. 16 DSGVO)\
-- Löschung (Art. 17 DSGVO)\
-- Einschränkung der Verarbeitung (Art. 18 DSGVO)\
-- Datenübertragbarkeit (Art. 20 DSGVO)\
-- Widerruf der Einwilligung mit Wirkung für die Zukunft (Art. 7 Abs. 3 DSGVO)\
-- Beschwerde bei einer Datenschutzaufsichtsbehörde (Art. 77 DSGVO)',
+			value: `Du hast das Recht auf:
+- Auskunft (Art. 15 DSGVO)
+- Berichtigung (Art. 16 DSGVO)
+- Löschung (Art. 17 DSGVO)
+- Einschränkung der Verarbeitung (Art. 18 DSGVO)
+- Datenübertragbarkeit (Art. 20 DSGVO)
+- Widerruf der Einwilligung mit Wirkung für die Zukunft (Art. 7 Abs. 3 DSGVO)
+- Beschwerde bei einer Datenschutzaufsichtsbehörde (Art. 77 DSGVO)`,
 		},
 		{
 			name: 'Kontaktdaten des Verantwortlichen',
-			value: 'Email: [tipptop.dev@gmail.com](mailto:tipptop.dev@gmail.com?subject=[DSVGO])\
-Discord: <@398926591859752960>',
+			value: `Email: [tipptop.dev@gmail.com](mailto:tipptop.dev@gmail.com?subject=[DSVGO])
+Discord: <@398926591859752960>`,
 		},
 	)
 
@@ -76,21 +78,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 			time: 360_000,
 		})
 
+		logger.transports[2].level = 'debug'
+		// logger.debug('accept object', accept)
+
 		if (accept.customId === 'terms_accept') {
-			// TODO: database update
+			logger.info(`db is open: ${interaction.client.db.open}`)
+			interaction.client.db.prepare('INSERT INTO users (user_id, accepted_terms) VALUES (?, ?)')
+				.run(accept.user.id, new Date().toISOString())
+
 			await accept.reply({
 				content: 'Genehmigung erteilt! SSIO wird dir nun antworten.',
 				flags: MessageFlags.Ephemeral,
 			})
 		}
 		else if (accept.customId === 'terms_decline') {
+			interaction.client.db.prepare('DELETE FROM users WHERE user_id = ?')
+				.run(accept.user.id)
+
 			await accept.reply({
 				content: 'Alles klar. SSIO wird dir nicht zuhören.',
 				flags: MessageFlags.Ephemeral,
 			})
 		}
 	}
-	catch {
+	catch (e) {
+		if (e instanceof SqliteError) throw e
+		logger.debug('some error...', e)
+
 		await interaction.followUp({
 			content: 'Keine Anwort ist auch ne Antwort.',
 			flags: MessageFlags.Ephemeral,

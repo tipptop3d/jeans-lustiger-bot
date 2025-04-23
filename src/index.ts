@@ -5,32 +5,41 @@ import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'readline'
 import { Key } from 'node:readline'
-import { DatabaseSync } from 'node:sqlite'
 
+import DBConstructor, { type Database } from 'better-sqlite3'
 import { Client, Collection, Events, GatewayIntentBits, MessageFlags } from 'discord.js'
-import logger from '@utils/logging.js'
-import { Command, isCommand } from '@typings/command'
+import logger from '@utils/logging.ts'
+import { Command, isCommand } from '@typings/command.ts'
+import { populateUsersCache, cache } from '@utils/cache.ts'
 
 // Create a new client instance
 
 const databaseFolder = path.resolve(import.meta.dirname, '..')
-logger.info(databaseFolder)
-const db = new DatabaseSync(path.join(databaseFolder, 'jeans_lustiger_bot.db'))
+logger.info(`Initiliaze database at ${databaseFolder}`)
+const db = new DBConstructor(path.join(databaseFolder, 'jeans_lustiger_bot.db'))
+logger.info(`db is open: ${db.open}`)
+db.pragma('journal_mode = WAL')
 
-db.exec(`--sql
-	CREATE TABLE users (
-		id TEXT PRIMARY KEY,
+db.prepare(`
+	CREATE TABLE IF NOT EXISTS users (
+		user_id TEXT PRIMARY KEY,
 		terms_accept_date TEXT
 	)
-`)
+`).run()
+
+populateUsersCache(db)
 
 declare module 'discord.js' {
 	interface Client {
 		commands: Collection<string, Command>
+		db: Database
+		cache: typeof cache
 	}
 }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] })
+client.db = db
+client.cache = cache
 client.commands = new Collection<string, Command>()
 
 // import commands
@@ -39,9 +48,9 @@ const commandFolder = path.join(import.meta.dirname, 'commands')
 async function loadCommands(cacheBust: boolean) {
 	client.commands.clear()
 	for (const file of fs.readdirSync(commandFolder, { withFileTypes: true, recursive: true })) {
-		if (file.isFile() && file.name.endsWith('.ts')) {
+		if (file.isFile() && file.name.endsWith('.command.ts')) {
 			const filePath = path.join(file.parentPath, file.name)
-			const command = await import(`${filePath}${cacheBust ? Date.now() : ''}`)
+			const command = await import(`${filePath}${cacheBust ? `?${Date.now()}` : ''}`)
 			if (isCommand(command)) {
 				client.commands.set(command.data.name, command)
 			}
@@ -50,26 +59,25 @@ async function loadCommands(cacheBust: boolean) {
 			}
 		}
 	}
+	const commandsArray = Array.from(client.commands)
+
+	// Find the longest command name length
+	const maxLength = Math.max(...commandsArray.map(([name]) => name.length))
+
+	// Build the padded log string
+	const commandList = commandsArray
+		.map(([name, cmd]) => {
+			const paddedName = name.padEnd(maxLength, ' ')
+			return `${paddedName} | ${cmd.data.description}`
+		})
+		.join('\n')
+
+	logger.info(
+		`Registered ${client.commands.size} Command${client.commands.size !== 1 ? 's' : ''}:\n${commandList}`, commandsArray,
+	)
 }
 
 await loadCommands(false)
-
-const commandsArray = Array.from(client.commands)
-
-// Find the longest command name length
-const maxLength = Math.max(...commandsArray.map(([name]) => name.length))
-
-// Build the padded log string
-const commandList = commandsArray
-	.map(([name, cmd]) => {
-		const paddedName = name.padEnd(maxLength, ' ')
-		return `${paddedName} | ${cmd.data.description}`
-	})
-	.join('\n')
-
-logger.info(
-	`Registered ${client.commands.size} Command${client.commands.size !== 1 ? 's' : ''}:\n${commandList}`, commandsArray,
-)
 
 // When the client is ready, run this code (only once).
 // The distinction between `client: Client<boolean>` and `readyClient: Client<true>` is important for TypeScript developers.
@@ -84,7 +92,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 	const command = interaction.client.commands.get(interaction.commandName)
 
 	if (!command) {
-		console.error(`No command matching ${interaction.commandName} was found.`)
+		logger.error(`No command matching ${interaction.commandName} was found.`)
 		return
 	}
 
@@ -94,7 +102,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 		await command.execute(interaction)
 	}
 	catch (error) {
-		logger.error(`Error while executing command ${command.data.name}`, error)
+		logger.error(`Error while executing command ${command.data.name}`, { error })
 		if (interaction.replied || interaction.deferred) {
 			await interaction.followUp({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral })
 		}
@@ -115,11 +123,24 @@ process.stdin.on('keypress', async (_, key: Key) => {
 
 	if (key.ctrl && key.name === 'c') {
 		// Handle Ctrl+C manually to exit
-		console.log('\nGracefully shutting down...')
-		process.kill(process.pid, 'SIGINT')
+		cleanup()
+		process.exit(0)
 	}
+})
+
+process.on('uncaughtException', (err, origin) => {
+	logger.error(`Caught exception: ${err.message}\nException origin: ${origin}`, { error: err })
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+	logger.error('Unhandled Rejection', { promise, reason })
 })
 
 // Log in to Discord with your client's token
 client.login(process.env.BOT_TOKEN)
-db.close()
+
+function cleanup() {
+	logger.info('Cleaning up...')
+	client.db.close()
+	client.destroy()
+}
