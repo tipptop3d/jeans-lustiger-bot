@@ -1,57 +1,80 @@
+import dotenv from 'dotenv'
+dotenv.config()
+
 import pjson from '../package.json'
 
+import path from 'path'
 import fs from 'node:fs'
-import path from 'node:path'
 
 import { Command as CommandLineInterface, Option } from 'commander'
-import { RequestMethod, REST, RESTPostAPIChatInputApplicationCommandsJSONBody } from 'discord.js'
+import { RequestMethod, REST, RESTPostAPIChatInputApplicationCommandsJSONBody, Routes } from 'discord.js'
+import {
+	RESTPutAPIApplicationCommandsResult,
+	RESTPostAPIApplicationCommandsResult,
+	RESTGetAPIApplicationCommandsResult,
+} from 'discord-api-types/v10'
 
 import { isCommand } from '../src/typings/command.ts'
 
-interface getCommandsOptions {
-	limit?: number
-	filter?: string
-	regex?: RegExp
-	folder?: string
+type GuildOrGlobal = {
+	guildId: string
+	global: false
+}	|	{
+	guildId: undefined
+	global: true
 }
 
-async function getCommands(specified_path: string, options: getCommandsOptions) {
-	const limit = (options.limit && options.limit > 0) ? options.limit : Infinity
+interface BaseOptions {
+	botToken: string
+	applicationId: string
+}
 
+async function handleFiles(action: RequestMethod, files: string[], options: BaseOptions & GuildOrGlobal) {
 	const commands: RESTPostAPIChatInputApplicationCommandsJSONBody[] = []
-	for (const file of fs.readdirSync(specified_path, { withFileTypes: true, recursive: true })) {
-		if (file.isFile() && file.name.endsWith('.command.ts')) {
-			const filePath = path.join(file.parentPath, file.name)
-			const command = await import(filePath)
-			if (isCommand(command)) {
-				if (
-					!(options.filter && command.data.name.includes(options.filter))
-					|| !(options.regex && command.data.name.match(options.regex))
-					|| !(options.folder && filePath.split(path.sep).includes(options.folder))
-				)
-					commands.push(command.data.toJSON())
-			}
-			else {
-				console.warn(`The command at ${filePath} is not a suitable command.`)
-			}
-		}
-		if (commands.length >= limit) {
-			break
+	for (const file of files) {
+		const command = await import(path.resolve(file))
+		if (isCommand(command)) {
+			commands.push(command.data.toJSON())
 		}
 	}
-	return commands
-}
 
-interface ProgramOptions {
-	guild?: string
-	global?: boolean
-	search?: string
-	filter?: string
-	regex?: string
-}
+	if (commands.length === 0) {
+		console.log('No commands found.')
+		return
+	}
 
-async function handleProgram(files: string[], options: ProgramOptions) {
+	const route = options.global
+		? Routes.applicationCommands(options.applicationId)
+		: Routes.applicationGuildCommands(options.applicationId, options.guildId)
 
+	const rest = new REST().setToken(options.botToken)
+
+	if (action === RequestMethod.Put) {
+		try {
+			const data = (await rest.put(route, {
+				body: commands,
+			})) as RESTPutAPIApplicationCommandsResult
+			console.log(`Successfully overwrote ${data.length} application commands.`)
+		}
+		catch (e) {
+			console.error(`Failed to overwrite application commands.\nReason: ${e}`)
+		}
+	}
+	else if (action === RequestMethod.Post) {
+		const data: RESTPostAPIApplicationCommandsResult[] = []
+		for (const command of commands) {
+			try {
+				data.push(await rest.post(route, {
+					body: command,
+				}) as RESTPostAPIApplicationCommandsResult)
+				console.log(`Successfully created/overwrote ${command.name} command.`)
+			}
+			catch (e) {
+				console.error(`Failed to create/overwrite ${command.name} command.\nReason: ${e}`)
+			}
+		}
+		console.log(`Successfully created/overwrote ${data.length} application commands.`)
+	}
 }
 
 const program = new CommandLineInterface()
@@ -65,13 +88,51 @@ program
 	})
 
 program
-	.command('replace')
-	.argument('[files...]', '.ts files containing the desired commands.')
+	.command('bulk')
+	.argument('[files...]', '.js/.ts files containing the desired commands.')
 	.description(
-		'Either replaces all given commands or found commands in the specified scope',
+		'Bulk overwrites all commands found in files for the specified scope',
 	)
 	.addOption(
-		new Option('-g, --guild [guild_id]', 'Replaces all commands of a specified guild scope.')
+		new Option('-b --bot-token <bot_token>', 'The bot token to use.')
+			.makeOptionMandatory(true)
+			.env('BOT_TOKEN'),
+	)
+	.addOption(
+		new Option('-a, --application-id <application_id>', 'The application ID of the bot.')
+			.makeOptionMandatory(true)
+			.env('APPLICATION_ID'),
+	)
+	.addOption(
+		new Option('-g, --guild-id [guild_id]', 'Replaces all commands of a specified guild scope.')
+			.conflicts('global')
+			.env('DEPLOY_GUILD_ID'),
+	)
+	.addOption(
+		new Option('-G, --global', 'Replaces all commands of the global scope.')
+			.conflicts('guild-id')
+			.default(true),
+	)
+	.action(handleFiles.bind(null, RequestMethod.Put))
+
+program
+	.command('create')
+	.argument('[files...]', '.js/.ts files containing the desired commands.')
+	.description(
+		'Creates all commands found in files for the specified scope',
+	)
+	.addOption(
+		new Option('-b --bot-token <bot_token>', 'The bot token to use.')
+			.makeOptionMandatory(true)
+			.env('BOT_TOKEN'),
+	)
+	.addOption(
+		new Option('-a, --application-id <application_id>', 'The application ID of the bot.')
+			.makeOptionMandatory(true)
+			.env('APPLICATION_ID'),
+	)
+	.addOption(
+		new Option('-g, --guild-id [guild_id]', 'Replaces all commands of a specified guild scope.')
 			.conflicts('global')
 			.env('DEPLOY_GUILD_ID'),
 	)
@@ -80,15 +141,61 @@ program
 			.conflicts('guild')
 			.default(true),
 	)
-	.option('-S --search [path]', 'Search for `.command.ts` files in the specified path.', '.')
+	.action(handleFiles.bind(null, RequestMethod.Post))
+
+interface GetOptions extends BaseOptions {
+	output?: string
+	filter?: string
+}
+
+program
+	.command('get')
+	.description('Get all commands for the specified scope')
 	.addOption(
-		new Option('-F, --filter [pattern]', 'Only replace commands that includes the pattern.')
-			.implies({ search: true }),
+		new Option('-b --bot-token <bot_token>', 'The bot token to use.')
+			.makeOptionMandatory(true)
+			.env('BOT_TOKEN'),
 	)
 	.addOption(
-		new Option('-R, --regex [regex]', 'Only replace commands that match the Regex pattern.')
-			.implies({ search: true }),
+		new Option('-a, --application-id <application_id>', 'The application ID of the bot.')
+			.makeOptionMandatory(true)
+			.env('APPLICATION_ID'),
 	)
-	.action(handleProgram)
+	.addOption(
+		new Option('-g, --guild-id [guild_id]', 'Replaces all commands of a specified guild scope.')
+			.conflicts('global')
+			.env('DEPLOY_GUILD_ID'),
+	)
+	.addOption(
+		new Option('-G, --global', 'Replaces all commands of the global scope.')
+			.conflicts('guild')
+			.default(true),
+	)
+	.option('-o, --output [output]', 'Output file to save the commands to.')
+	.option('-f, --filter [filter]', 'Filter the commands by name.')
+	.action(async (options: GetOptions & GuildOrGlobal) => {
+		const route = options.global
+			? Routes.applicationCommands(options.applicationId)
+			: Routes.applicationGuildCommands(options.applicationId, options.guildId)
+
+		const rest = new REST().setToken(options.botToken)
+
+		try {
+			let data = (await rest.get(route)) as RESTGetAPIApplicationCommandsResult
+			if (options.filter) {
+				const filter = options.filter
+				data = data.filter(command => command.name.includes(filter))
+			}
+			if (options.output) {
+				await fs.promises.writeFile(options.output, data.map(command => command.id).join('\n'))
+			}
+			else {
+				console.log(data.map(command => command.id).join('\n'))
+			}
+		}
+		catch (e) {
+			console.error(`Failed to get application commands.\nReason: ${e}`)
+		}
+	})
 
 program.parseAsync(process.argv)
