@@ -48,6 +48,4 @@ const logger = createLogger({
 	],
 })
 
-logger.info('Logging started')
-
 export default logger

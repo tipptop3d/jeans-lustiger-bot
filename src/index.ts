@@ -12,6 +12,8 @@ import logger from '@utils/logging.ts'
 import { Command, isCommand } from '@typings/command.ts'
 import { populateUsersCache, cache } from '@utils/cache.ts'
 
+logger.info('Logging started')
+
 // Create a new client instance
 
 const databaseFolder = path.resolve(import.meta.dirname, '..')
